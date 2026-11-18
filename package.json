@@ -1,0 +1,74 @@
+{
+  "name": "@lucaoliano/custom-fiscal-printer",
+  "version": "0.1.0",
+  "description": "Unofficial Node.js/TypeScript driver for Custom fiscal printers and Italian RT devices, with functional parity with the official CUSTOMJPOSF JavaPOS driver. TCP and serial, no Java or native libraries.",
+  "keywords": [
+    "custom",
+    "fiscal-printer",
+    "stampante-fiscale",
+    "registratore-telematico",
+    "rt",
+    "scontrino",
+    "javapos",
+    "jpos",
+    "upos",
+    "pos",
+    "serialport",
+    "typescript",
+    "kube-ii-f",
+    "q3x-f",
+    "big-plus"
+  ],
+  "author": "Luca Oliano",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucaoliano/custom-fiscal-printer.git"
+  },
+  "homepage": "https://github.com/lucaoliano/custom-fiscal-printer#readme",
+  "bugs": {
+    "url": "https://github.com/lucaoliano/custom-fiscal-printer/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc",
+    "watch": "tsc -w",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p .",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "serialport": "^10.0.0 || ^11.0.0 || ^12.0.0 || ^13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "serialport": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
