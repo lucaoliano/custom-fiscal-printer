@@ -36,7 +36,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./emulator": {
+      "types": "./dist/emulator/index.d.ts",
+      "default": "./dist/emulator/index.js"
+    }
   },
   "sideEffects": false,
   "files": [
@@ -70,5 +74,8 @@
     "@types/node": "22.20.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3"
+  },
+  "bin": {
+    "custom-fiscal-emulator": "dist/emulator/cli.js"
   }
 }

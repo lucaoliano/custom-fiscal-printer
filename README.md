@@ -371,6 +371,47 @@ The printer accepts Latin-1 characters. The `€` sign is converted automaticall
 
 ---
 
+## Emulator
+
+`@lucaoliano/custom-fiscal-printer/emulator` is a stateful emulator of a Custom RT printer, for developing and testing without hardware. It is **not** part of the main entry point, so it never ends up in an application bundle by accident.
+
+> **What it is and is not.** It reproduces this library's reading of the protocol (commands, payload layouts, response offsets), not the behaviour of a real Q3X-F. Where the library cannot say what the device would answer, the emulator makes an explicit assumption (marked "Ipotesi" in the source). Passing against the emulator proves that client and emulator agree, not that a real printer does. Daily receipt counter (`1004`) and Z number (`1104`) semantics, payment form indices, 0 % VAT handling and the refund/void replies are still unverified on hardware.
+
+What it models: document state (sale, partial payment, paid, emitted-but-not-cut, non-fiscal), item totals computed from the `33011` lines (so the `1003` total check is real), payments with change on cash only, the daily receipt counter, Z numbering, X/Z reports, refund and void documents referencing an emitted document, paper and cover status. It is strict: an unknown command is answered with an error (ERR09) and recorded in `unknownCommands`, never with a silent acknowledgement. Assert that the list is empty after a flow.
+
+```typescript
+import { CustomFiscalPrinter } from '@lucaoliano/custom-fiscal-printer';
+import { EmulatedPrinter, EmulatorTransport, startEmulatorServer } from '@lucaoliano/custom-fiscal-printer/emulator';
+
+// In process, no sockets
+const emu = new EmulatedPrinter();
+const printer = new CustomFiscalPrinter(new EmulatorTransport(emu), { statusPolling: false });
+
+// Or over TCP, like an Ethernet printer
+const server = await startEmulatorServer({}, { port: 9100 }); // 127.0.0.1 by default
+```
+
+Or from the command line (`npx custom-fiscal-emulator --help`):
+
+```bash
+custom-fiscal-emulator --port 9100 --verbose --fault 3011:lose-reply
+```
+
+**Fault injection** is the reason to use it: `emu.inject(prefix, fault, times)`.
+
+| Fault | The command is executed? | What the client sees |
+|:---|:---|:---|
+| `error` (`code`, `extendedCode`) | no | `CustomFiscalError` |
+| `lose-command` | no | connection closed, `sent: true` |
+| `lose-reply` | **yes** | connection closed, `sent: true` (unknown outcome) |
+| `truncate-reply` | yes | half a frame, then the connection closes |
+| `silence` | yes | `CustomTimeoutError`, `sent: true` |
+| `delay` (`ms`) | yes | late reply, or a timeout if longer than the client's |
+
+`lose-command` and `lose-reply` look the same to the client; only the emulator knows whether a document was emitted, which is what makes it possible to test idempotency and reconciliation. `emu.setPaper()`, `emu.setCoverOpen()` and `emu.setRtInService()` change the hardware state, `emu.documents` lists what was emitted and `emu.snapshot()` the counters.
+
+The emulator has no authentication and binds to `127.0.0.1`: do not expose it.
+
 ## Development
 
 ```bash
