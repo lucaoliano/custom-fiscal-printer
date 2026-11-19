@@ -105,6 +105,9 @@ export function parseResponse(buffer: Buffer): ParsedFrame {
   }
 
   const cntStr = frameBytes.subarray(1, 3).toString('latin1');
+  if (!/^\d{2}$/.test(cntStr)) {
+    throw new CustomProtocolError('Frame ricevuto con contatore non numerico', frameBytes);
+  }
   const counter = parseInt(cntStr, 10);
   const ident = frameBytes.subarray(3, 4).toString('latin1');
 

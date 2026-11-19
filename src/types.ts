@@ -2,6 +2,8 @@
  * Tipi, DTO e interfacce per il modulo CustomFiscalPrinter
  */
 
+import type { ReconnectOptions } from './transports/reconnecting.transport';
+
 /**
  * Configurazione per la connessione via rete locale Ethernet o Wi-Fi.
  */
@@ -14,6 +16,8 @@ export interface TcpConnectionOptions {
   port?: number;
   /** Timeout massimo di attesa in millisecondi (default: 8000) */
   timeout?: number;
+  /** Riapre il canale se cade o dopo un timeout, prima del comando successivo (mai rigiocando un comando inviato). Default: false */
+  reconnect?: boolean | ReconnectOptions;
 }
 
 /**
@@ -34,6 +38,8 @@ export interface SerialConnectionOptions {
   stopBits?: 1 | 2;
   /** Timeout massimo di attesa in millisecondi (default: 8000) */
   timeout?: number;
+  /** Riapre la porta se cade o dopo un timeout, prima del comando successivo (mai rigiocando un comando inviato). Default: false */
+  reconnect?: boolean | ReconnectOptions;
 }
 
 /**

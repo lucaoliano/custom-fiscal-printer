@@ -26,10 +26,12 @@ import { ITransport } from '../transports/transport.interface';
 import { TcpTransport } from '../transports/tcp.transport';
 import { SerialTransport } from '../transports/serial.transport';
 import { MockTransport } from '../transports/mock.transport';
+import { ReconnectingTransport } from '../transports/reconnecting.transport';
 import { buildFrame, ParsedFrame, parseResponse } from '../protocol/frame';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import {
+  CustomConnectionError,
   CustomFiscalError,
   CustomOperationNotAllowedError,
   CustomProtocolError,
@@ -80,6 +82,21 @@ export function isIgnoredByJavaDriver(code: number, command: string): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Marca l'errore di uno scambio con `sent` (frame consegnato per intero al trasporto) e porta gli errori
+ * di canale grezzi (ECONNRESET, ...) in `CustomConnectionError`, così il chiamante sa se l'esito è ignoto.
+ */
+function tagOutcome(e: unknown, command: string, sent: boolean): unknown {
+  if (e instanceof CustomTimeoutError || e instanceof CustomProtocolError || e instanceof CustomConnectionError) {
+    e.sent ??= sent;
+    return e;
+  }
+  if (e instanceof Error) {
+    return new CustomConnectionError(e.message, { sent, command, cause: e });
+  }
+  return e;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -257,6 +274,11 @@ export interface CustomFiscalPrinter {
   once(event: 'statusUpdate', listener: (e: PrinterStatusUpdateEvent) => void): this;
   off(event: 'statusUpdate', listener: (e: PrinterStatusUpdateEvent) => void): this;
   emit(event: 'statusUpdate', e: PrinterStatusUpdateEvent): boolean;
+  /** Il canale è stato riaperto dopo una caduta o un timeout: lo stato del documento sulla stampante è da rileggere. */
+  on(event: 'reconnected', listener: () => void): this;
+  once(event: 'reconnected', listener: () => void): this;
+  off(event: 'reconnected', listener: () => void): this;
+  emit(event: 'reconnected'): boolean;
 }
 
 /** Documento commerciale RT di reso/annullo in corso (`RTDocType`/`RTDocZNum`/... del driver Java). */
@@ -401,6 +423,24 @@ export class CustomFiscalPrinter extends EventEmitter {
         default:
           throw new Error('Tipo di connessione non valido');
       }
+      if (opts.type !== 'mock' && opts.reconnect) {
+        this.transport = new ReconnectingTransport(
+          this.transport,
+          opts.reconnect === true ? {} : opts.reconnect,
+          () => this.onTransportReconnected()
+        );
+      }
+    }
+  }
+
+  /** Il canale è stato sostituito: i flag del documento in memoria non sono più affidabili. */
+  private onTransportReconnected(): void {
+    this.resetDocumentState();
+    this.logger?.warn?.('Canale stampante riaperto: stato del documento da rileggere');
+    try {
+      this.emit('reconnected');
+    } catch (e) {
+      this.logger?.warn?.('Listener reconnected ha lanciato un errore', { error: (e as Error).message });
     }
   }
 
@@ -640,12 +680,24 @@ export class CustomFiscalPrinter extends EventEmitter {
    * entro il timeout residuo. Non ritenta mai la scrittura.
    */
   private async exchange(command: string, timeoutMs: number): Promise<ParsedFrame> {
+    let sent = false;
+    try {
+      return await this.exchangeUnsafe(command, timeoutMs, () => {
+        sent = true;
+      });
+    } catch (e) {
+      throw tagOutcome(e, command, sent);
+    }
+  }
+
+  private async exchangeUnsafe(command: string, timeoutMs: number, markSent: () => void): Promise<ParsedFrame> {
     const sentCounter = this.nextCounter();
     const frame = buildFrame(command, sentCounter);
 
     this.transport.flush?.();
     this.logger?.debug?.(`TX ${frame.toString('hex')}`, { command, counter: sentCounter });
     await this.transport.write(frame);
+    markSent();
 
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -663,7 +715,15 @@ export class CustomFiscalPrinter extends EventEmitter {
         throw e;
       }
       this.logger?.debug?.(`RX ${raw.toString('hex')}`, { command });
-      const parsed = parseResponse(raw);
+      let parsed: ParsedFrame;
+      try {
+        parsed = parseResponse(raw);
+      } catch (e) {
+        if (!(e instanceof CustomProtocolError)) throw e;
+        // frame malformato (troppo corto, contatore non numerico): scartato, si continua entro il timeout residuo
+        this.logger?.warn?.('Scartato frame malformato', { command, error: e.message, frame: raw.toString('hex') });
+        continue;
+      }
       if (!parsed.complete) continue;
       if (parsed.counter !== sentCounter) {
         // risposta obsoleta (es. arrivata dopo un timeout): scarta e continua a leggere
@@ -704,7 +764,7 @@ export class CustomFiscalPrinter extends EventEmitter {
         }
       }
 
-      const code = parsed.errorCode || 99;
+      const code = parsed.errorCode ?? 99;
       if (this.errorPolicy === 'java' && isIgnoredByJavaDriver(code, command)) {
         // Come handleCustomError del driver Java: in questi contesti l'errore non viene propagato
         this.logger?.warn?.(`Errore ${code} ignorato (comportamento driver Java)`, { command, code });

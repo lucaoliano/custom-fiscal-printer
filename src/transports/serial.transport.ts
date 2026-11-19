@@ -1,5 +1,5 @@
 import { ITransport } from './transport.interface';
-import { CustomTimeoutError } from '../errors';
+import { CustomConnectionError, CustomTimeoutError } from '../errors';
 import { FrameReader } from './frame-buffer';
 
 export class SerialTransport implements ITransport {
@@ -30,10 +30,10 @@ export class SerialTransport implements ITransport {
     }
 
     return new Promise((resolve, reject) => {
-      this.reader = new FrameReader();
-      const reader = this.reader;
+      const reader = new FrameReader();
+      this.reader = reader;
 
-      this.port = new SerialPortClass({
+      const port = new SerialPortClass({
         path: this.path,
         baudRate: this.baudRate,
         dataBits: this.dataBits,
@@ -41,8 +41,11 @@ export class SerialTransport implements ITransport {
         stopBits: this.stopBits,
         autoOpen: false
       });
+      this.port = port;
+      // Gli eventi di una porta ormai sostituita non devono toccare lo stato di quella corrente.
+      const isCurrent = () => this.port === port;
 
-      this.port.open((err: Error | null) => {
+      port.open((err: Error | null) => {
         if (err) {
           reject(err);
           return;
@@ -51,40 +54,49 @@ export class SerialTransport implements ITransport {
         resolve();
       });
 
-      this.port.on('data', (chunk: Buffer) => {
+      port.on('data', (chunk: Buffer) => {
         reader.feed(chunk);
       });
 
-      this.port.on('error', (err: Error) => {
-        this.connected = false;
+      port.on('error', (err: Error) => {
+        if (isCurrent()) this.connected = false;
         // L'errore non viene ingoiato: rifiuta le letture pendenti (e la connect se ancora in corso)
         reader.failAll(err);
         reject(err);
       });
 
-      this.port.on('close', () => {
-        this.connected = false;
-        reader.failAll(new Error('Porta seriale chiusa'));
+      port.on('close', () => {
+        if (isCurrent()) this.connected = false;
+        reader.failAll(new CustomConnectionError('Porta seriale chiusa'));
       });
     });
   }
 
   async write(data: Buffer): Promise<void> {
-    if (!this.connected || !this.port) {
-      throw new Error('Porta seriale non aperta');
+    const port = this.port;
+    if (!this.connected || !port) {
+      throw new CustomConnectionError('Porta seriale non aperta');
     }
 
     return new Promise((resolve, reject) => {
-      this.port.write(data, (err: Error | null) => {
+      const timer = setTimeout(() => {
+        reject(new CustomTimeoutError('Timeout scrittura dati seriali verso la stampante', this.defaultTimeoutMs));
+      }, this.defaultTimeoutMs);
+      const done = (err?: Error | null) => {
+        clearTimeout(timer);
         if (err) reject(err);
-        else this.port.drain((drainErr: Error | null) => (drainErr ? reject(drainErr) : resolve()));
+        else resolve();
+      };
+      port.write(data, (err: Error | null) => {
+        if (err) done(err);
+        else port.drain((drainErr: Error | null) => done(drainErr));
       });
     });
   }
 
   async read(timeoutMs: number = this.defaultTimeoutMs): Promise<Buffer> {
     if (!this.connected || !this.port) {
-      throw new Error('Porta seriale non aperta');
+      throw new CustomConnectionError('Porta seriale non aperta');
     }
 
     return this.reader.read(
@@ -99,14 +111,15 @@ export class SerialTransport implements ITransport {
   }
 
   async close(): Promise<void> {
-    this.reader.failAll(new Error('Trasporto seriale chiuso'));
-    if (this.port && this.port.isOpen) {
-      await new Promise<void>((resolve) => {
-        this.port.close(() => resolve());
-      });
-    }
+    this.reader.failAll(new CustomConnectionError('Trasporto seriale chiuso'));
+    const port = this.port;
     this.port = null;
     this.connected = false;
+    if (port && port.isOpen) {
+      await new Promise<void>((resolve) => {
+        port.close(() => resolve());
+      });
+    }
     this.reader.flush();
   }
 

@@ -135,6 +135,8 @@ new CustomFiscalPrinter({
 new CustomFiscalPrinter(myTransport);
 ```
 
+**Reconnection.** With `reconnect: true` (or `{ baseDelayMs, maxDelayMs, attempts }`) on a TCP or serial connection, the channel is reopened with exponential backoff when it dropped or after a read timeout. It reconnects only **before** sending a command, never in the middle of an exchange and never replaying a command already sent. After a reconnection the in-memory document state is reset and the printer emits `'reconnected'`: read the real state again (`getFiscalState()`) and, if a receipt was open, call `resetPrinter()`. The same behaviour is available for any transport with `new ReconnectingTransport(inner, options, onReconnect)`.
+
 **Linux, USB:** Custom printers show up as `/dev/ttyACM*`. To use them without root, add the user to the `dialout` group or install a udev rule. For example, for a Kube II:
 
 ```
@@ -204,6 +206,8 @@ Each packet carries a counter (01–99). If a response arrives after the timeout
 > [!IMPORTANT]
 > A `CustomTimeoutError` does **not** mean the command was not executed: the printer may have emitted the document. The driver never retries commands automatically. Before repeating a fiscal operation, check the document state, for example with `getTicketData()`.
 
+> Errors from a command exchange (`CustomTimeoutError`, `CustomConnectionError`, `CustomProtocolError`) carry a `sent` field: `true` when the command frame was fully handed to the transport (outcome **unknown**), `false` when the command never left and can be repeated safely.
+
 ---
 
 ## Error handling
@@ -212,6 +216,7 @@ Each packet carries a counter (01–99). If a response arrives after the timeout
 |---|---|
 | `CustomFiscalError` | The printer replies with an error code. |
 | `CustomTimeoutError` | No response within the timeout. |
+| `CustomConnectionError` | Channel error: socket closed, serial port unplugged, write failed. |
 | `CustomOperationNotAllowedError` | The operation is not allowed in the current state, with the same JPOS codes as the Java driver (`jposCode`, `extendedJposCode`): wrong sequence, fiscal day open, cover open or paper out before `setDate`/`setHeaderLine`, refund or void rejected by the printer. |
 | `CustomProtocolError` | Invalid frame, non-transmittable character, receive buffer over the limit, bad checksum with `checksumPolicy: 'strict'`. |
 | `RangeError` | Invalid input: non-integer or out-of-range amounts, VAT rate, department, lottery code and so on. Thrown **before** any command is sent. |

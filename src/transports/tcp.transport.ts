@@ -1,12 +1,17 @@
 import * as net from 'net';
 import { ITransport } from './transport.interface';
-import { CustomTimeoutError } from '../errors';
+import { CustomConnectionError, CustomTimeoutError } from '../errors';
 import { FrameReader } from './frame-buffer';
+
+/** Intervallo del keep-alive TCP: rileva un peer sparito (cavo staccato, stampante spenta) senza attendere un comando. */
+const KEEP_ALIVE_MS = 10_000;
 
 export class TcpTransport implements ITransport {
   private socket: net.Socket | null = null;
   private reader = new FrameReader();
   private connected: boolean = false;
+  /** Connessione in corso: chiamate concorrenti a `connect()` condividono lo stesso tentativo. */
+  private connecting: Promise<void> | null = null;
 
   constructor(
     private readonly host: string,
@@ -14,54 +19,76 @@ export class TcpTransport implements ITransport {
     private readonly defaultTimeoutMs: number = 8000
   ) {}
 
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
     if (this.connected && this.socket) {
-      return;
+      return Promise.resolve();
     }
+    this.connecting ??= this.dial().finally(() => {
+      this.connecting = null;
+    });
+    return this.connecting;
+  }
 
+  private dial(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.socket = new net.Socket();
-      this.reader = new FrameReader();
-      const reader = this.reader;
+      const socket = new net.Socket();
+      const reader = new FrameReader();
+      this.socket = socket;
+      this.reader = reader;
+      // Gli eventi di un socket ormai sostituito non devono toccare lo stato di quello corrente.
+      const isCurrent = () => this.socket === socket;
+
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true, KEEP_ALIVE_MS);
 
       const connectTimer = setTimeout(() => {
-        if (this.socket) {
-          this.socket.destroy();
-        }
+        socket.destroy();
         reject(new CustomTimeoutError(`Timeout connessione TCP a ${this.host}:${this.port}`, this.defaultTimeoutMs));
       }, this.defaultTimeoutMs);
 
-      this.socket.connect(this.port, this.host, () => {
-        clearTimeout(connectTimer);
-        this.connected = true;
-        resolve();
-      });
-
-      this.socket.on('data', (chunk: Buffer) => {
+      socket.on('data', (chunk: Buffer) => {
         reader.feed(chunk);
       });
 
-      this.socket.on('error', (err: Error) => {
+      socket.on('error', (err: Error) => {
         clearTimeout(connectTimer);
-        this.connected = false;
+        if (isCurrent()) this.connected = false;
         reader.failAll(err);
         reject(err);
       });
 
-      this.socket.on('close', () => {
-        this.connected = false;
-        reader.failAll(new Error('Connessione TCP chiusa'));
+      socket.on('close', () => {
+        clearTimeout(connectTimer);
+        if (isCurrent()) {
+          this.connected = false;
+          this.socket = null;
+        }
+        reader.failAll(new CustomConnectionError('Connessione TCP chiusa'));
+        reject(new CustomConnectionError('Connessione TCP chiusa prima del completamento'));
+      });
+
+      socket.connect(this.port, this.host, () => {
+        clearTimeout(connectTimer);
+        this.connected = true;
+        resolve();
       });
     });
   }
 
   async write(data: Buffer): Promise<void> {
-    if (!this.connected || !this.socket) {
-      throw new Error('Socket TCP non connesso');
+    const socket = this.socket;
+    if (!this.connected || !socket) {
+      throw new CustomConnectionError('Socket TCP non connesso');
     }
 
     return new Promise((resolve, reject) => {
-      this.socket!.write(data, (err) => {
+      // Con un peer morto la callback di write può non arrivare mai: il socket va chiuso, non solo il timer.
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new CustomTimeoutError('Timeout scrittura dati TCP verso la stampante', this.defaultTimeoutMs));
+      }, this.defaultTimeoutMs);
+      socket.write(data, (err) => {
+        clearTimeout(timer);
         if (err) reject(err);
         else resolve();
       });
@@ -73,7 +100,7 @@ export class TcpTransport implements ITransport {
    */
   async read(timeoutMs: number = this.defaultTimeoutMs): Promise<Buffer> {
     if (!this.connected || !this.socket) {
-      throw new Error('Socket TCP non connesso');
+      throw new CustomConnectionError('Socket TCP non connesso');
     }
 
     return this.reader.read(
@@ -88,13 +115,14 @@ export class TcpTransport implements ITransport {
   }
 
   async close(): Promise<void> {
-    this.reader.failAll(new Error('Trasporto TCP chiuso'));
-    if (this.socket) {
-      this.socket.end();
-      this.socket.destroy();
-      this.socket = null;
-    }
+    this.reader.failAll(new CustomConnectionError('Trasporto TCP chiuso'));
+    const socket = this.socket;
+    this.socket = null;
     this.connected = false;
+    if (socket) {
+      socket.end();
+      socket.destroy();
+    }
     this.reader.flush();
   }
 

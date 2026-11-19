@@ -135,6 +135,8 @@ new CustomFiscalPrinter({
 new CustomFiscalPrinter(myTransport);
 ```
 
+**Riconnessione.** Con `reconnect: true` (o `{ baseDelayMs, maxDelayMs, attempts }`) su una connessione TCP o seriale, il canale viene riaperto con backoff esponenziale se è caduto o dopo un timeout di lettura. Si riconnette solo **prima** di inviare un comando, mai nel mezzo di uno scambio e mai rigiocando un comando già inviato. Dopo una riconnessione lo stato del documento in memoria viene azzerato e la stampante emette `'reconnected'`: rileggi lo stato reale (`getFiscalState()`) e, se uno scontrino era aperto, chiama `resetPrinter()`. Lo stesso comportamento è disponibile per qualunque trasporto con `new ReconnectingTransport(inner, options, onReconnect)`.
+
 **Linux, USB:** le stampanti Custom compaiono come `/dev/ttyACM*`. Per usarle senza privilegi di root, aggiungi l'utente al gruppo `dialout` oppure installa una regola udev. Per esempio, per una Kube II:
 
 ```
@@ -204,6 +206,8 @@ Ogni pacchetto porta un contatore (01–99). Se una risposta arriva dopo il time
 > [!IMPORTANT]
 > Un `CustomTimeoutError` **non** significa che il comando non sia stato eseguito: la stampante potrebbe aver emesso il documento. Il driver non ripete mai i comandi in automatico. Prima di ripetere un'operazione fiscale, verifica lo stato del documento, per esempio con `getTicketData()`.
 
+> Gli errori di uno scambio (`CustomTimeoutError`, `CustomConnectionError`, `CustomProtocolError`) hanno il campo `sent`: `true` se il frame del comando è stato consegnato per intero al trasporto (esito **ignoto**), `false` se il comando non è mai partito e si può ripetere senza rischi.
+
 ---
 
 ## Gestione degli errori
@@ -212,6 +216,7 @@ Ogni pacchetto porta un contatore (01–99). Se una risposta arriva dopo il time
 |---|---|
 | `CustomFiscalError` | La stampante risponde con un codice di errore. |
 | `CustomTimeoutError` | Nessuna risposta entro il timeout. |
+| `CustomConnectionError` | Errore del canale: socket chiuso, porta seriale scollegata, scrittura fallita. |
 | `CustomOperationNotAllowedError` | Operazione non consentita nello stato attuale, con gli stessi codici JPOS del driver Java (`jposCode`, `extendedJposCode`): sequenza errata, giornata fiscale aperta, coperchio aperto o carta esaurita prima di `setDate`/`setHeaderLine`, reso o annullo rifiutati dalla stampante. |
 | `CustomProtocolError` | Frame non valido, carattere non trasmissibile, buffer di ricezione oltre il limite, checksum errato con `checksumPolicy: 'strict'`. |
 | `RangeError` | Input non valido: importi non interi o fuori intervallo, aliquota, reparto, codice lotteria e così via. Viene sollevato **prima** di inviare qualunque comando. |

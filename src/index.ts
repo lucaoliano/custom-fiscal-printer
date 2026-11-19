@@ -10,6 +10,7 @@ export { ITransport } from './transports/transport.interface';
 export { TcpTransport } from './transports/tcp.transport';
 export { SerialTransport } from './transports/serial.transport';
 export { MockTransport, MockHandler } from './transports/mock.transport';
+export { ReconnectingTransport, ReconnectOptions } from './transports/reconnecting.transport';
 
 // Protocollo e formattazione
 export {
@@ -76,6 +77,7 @@ export { isIgnoredByJavaDriver } from './client/fiscal-printer';
 // Errori
 export {
   CustomFiscalError,
+  CustomConnectionError,
   CustomProtocolError,
   CustomTimeoutError,
   CustomOperationNotAllowedError,

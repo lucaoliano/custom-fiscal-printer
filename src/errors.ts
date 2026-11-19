@@ -92,8 +92,29 @@ export class CustomFiscalError extends Error {
   }
 }
 
+/**
+ * Errore di canale (socket chiuso, porta seriale scollegata, scrittura fallita).
+ *
+ * `sent` dice se il frame del comando è stato consegnato per intero al trasporto prima dell'errore:
+ * con `sent === true` l'esito è IGNOTO (la stampante può aver eseguito il comando), con `false` il comando
+ * non è mai partito e può essere ripetuto senza rischi.
+ */
+export class CustomConnectionError extends Error {
+  public sent?: boolean;
+  public readonly command?: string;
+
+  constructor(message: string, options: { sent?: boolean; command?: string; cause?: unknown } = {}) {
+    super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'CustomConnectionError';
+    this.sent = options.sent;
+    this.command = options.command;
+  }
+}
+
 export class CustomProtocolError extends Error {
   public readonly rawData?: string | Buffer;
+  /** Vedi `CustomConnectionError.sent`; valorizzato dal client sugli errori di uno scambio comando/risposta. */
+  public sent?: boolean;
 
   constructor(message: string, rawData?: string | Buffer) {
     super(message);
@@ -104,6 +125,8 @@ export class CustomProtocolError extends Error {
 
 export class CustomTimeoutError extends Error {
   public readonly timeoutMs: number;
+  /** Vedi `CustomConnectionError.sent`; valorizzato dal client sugli errori di uno scambio comando/risposta. */
+  public sent?: boolean;
   public readonly command?: string;
 
   constructor(message: string, timeoutMs: number, command?: string) {

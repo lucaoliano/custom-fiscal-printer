@@ -68,12 +68,15 @@ export class FrameBuffer {
 export class FrameReader {
   private readonly frames = new FrameBuffer();
   private pending: Array<{ check: () => void; fail: (e: Error) => void }> = [];
+  /** Errore (overflow) arrivato senza letture pendenti: viene restituito alla prossima `read`. */
+  private deferredError: Error | null = null;
 
   /** Da chiamare ad ogni chunk ricevuto. Errori di overflow rifiutano le letture pendenti. */
   feed(chunk: Buffer): void {
     try {
       this.frames.push(chunk);
     } catch (e) {
+      if (this.pending.length === 0) this.deferredError = e as Error;
       this.failAll(e as Error);
       return;
     }
@@ -83,6 +86,7 @@ export class FrameReader {
   /** Scarta i byte bufferizzati. */
   flush(): void {
     this.frames.clear();
+    this.deferredError = null;
   }
 
   /** Rifiuta immediatamente tutte le letture pendenti. */
@@ -93,6 +97,11 @@ export class FrameReader {
   }
 
   read(timeoutMs: number, makeTimeoutError: () => Error): Promise<Buffer> {
+    if (this.deferredError) {
+      const err = this.deferredError;
+      this.deferredError = null;
+      return Promise.reject(err);
+    }
     const existing = this.frames.take();
     if (existing) return Promise.resolve(existing);
 
