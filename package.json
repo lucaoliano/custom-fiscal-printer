@@ -1,6 +1,6 @@
 {
   "name": "@lucaoliano/custom-fiscal-printer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial Node.js/TypeScript driver for Custom fiscal printers and Italian RT devices, with functional parity with the official CUSTOMJPOSF JavaPOS driver. TCP and serial, no Java or native libraries.",
   "keywords": [
     "custom",
